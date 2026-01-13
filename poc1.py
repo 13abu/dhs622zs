@@ -7,7 +7,7 @@ api_id = int("35206697")
 api_hash = "361f05016f8aa55f5b88ce00f4231360"
 
 # Input data
-channel_names = ["rybar", "mig41"]
+channel_names = ["resistmirror1"]
 
 # Retrieve channel metadata from Telegram API
 with TelegramClient(app_name, api_id, api_hash) as client:
