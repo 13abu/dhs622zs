@@ -4,7 +4,7 @@ from telethon import functions
 from config import app_name, api_id, api_hash
 
 # Input data
-channel_names = ["rybar"]
+channel_names = ["rybar","mig41"]
 
 # Retrieve channel metadata from Telegram API
 with TelegramClient(app_name, api_id, api_hash) as client:
