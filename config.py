@@ -2,10 +2,7 @@ import os
 import platform
 import configparser
 
-home_dir = (
-    os.environ["userprofile"] if platform.system() == "Windows"
-    else os.path.expanduser("~")
-)
+home_dir = (os.environ["HOME"])
 config_file_full_path = os.path.join(home_dir, "dhs622.cfg")
 
 config = configparser.ConfigParser()
