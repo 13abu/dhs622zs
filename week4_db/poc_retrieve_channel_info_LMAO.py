@@ -11,8 +11,8 @@ if sys.platform == 'darwin':
 from telethon.tl.types.messages import ChatFull
 from telethon.sync import TelegramClient
 from telethon import functions
-from config import app_name, api_id, api_hash, config
-from db import insert_data_into_channel_metadata_table
+from week5.week5.config import app_name, api_id, api_hash
+from utilities.db import insert_data_into_channel_metadata_table
 
 def extract_data_dictionary_from_channel_object(
     channel_object: ChatFull, channel_name: str
@@ -30,7 +30,7 @@ def extract_data_dictionary_from_channel_object(
 
 if __name__ == '__main__':
     # Input data
-    channel_names = ["rybar", "mig41"]
+    channel_names = ["IndianMilitaryUpdates", "bnpkukrti", "BadrulBSL","Diplomatic_Talk","Turkeypedia","newsIEA","OsintTV","russiaukrwar","vishwahinduektasangh","hindu"]
 
     # Retrieve channel metadata from Telegram API
     with TelegramClient(app_name, api_id, api_hash) as client:

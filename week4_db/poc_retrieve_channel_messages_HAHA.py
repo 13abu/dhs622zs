@@ -8,9 +8,9 @@ if sys.platform == 'win32':
 
 from telethon.sync import TelegramClient
 from telethon.tl.patched import Message as TelegramMessage
-from config import app_name, api_id, api_hash
+from week5 import app_name, api_id, api_hash
 import time
-from db import insert_data_into_channel_messages_table
+from utilities.db import insert_data_into_channel_messages_table
 
 def extract_data_from_message_object(message: TelegramMessage) -> dict:
     message_dict = {
@@ -40,7 +40,7 @@ def extract_data_from_message_object(message: TelegramMessage) -> dict:
     return message_dict
 
 if __name__ == "__main__":
-    channel_names = ['rybar', 'mig41']
+    channel_names = ["IndianMilitaryUpdates", "bnpkukrti", "BadrulBSL","Diplomatic_Talk","Turkeypedia","newsIEA","OsintTV","russiaukrwar","vishwahinduektasangh","hindu"]
 
     for channel_name in channel_names:
         new_max_id = 0

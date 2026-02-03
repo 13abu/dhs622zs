@@ -4,3 +4,6 @@ psycopg2-binary
 sqlalchemy
 seaborn
 tqdm
+pika
+dash
+black

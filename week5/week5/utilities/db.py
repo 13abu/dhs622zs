@@ -1,7 +1,7 @@
-from config import *
 import sqlalchemy as sa
 from sqlalchemy.sql.schema import Table as SQLAlchemyTable
 from datetime import datetime
+from ..config import config
 
 
 def instantiate_channel_metadata_table(my_table_name: str) -> SQLAlchemyTable:
@@ -34,6 +34,64 @@ def instantiate_seed_table(my_table_name: str) -> SQLAlchemyTable:
     return my_table
 
 
+
+def insert_data_into_channel_metadata_table(records: list[dict]):
+    # check if the table already contains channels matching the IDs of the incoming records
+    stmt = sa.select(channel_metadata_table.c.channel_id).where(
+        channel_metadata_table.c.channel_id.in_(
+            [record["channel_id"] for record in records]
+        )
+    )
+    with engine.connect() as conn:
+        rp = conn.execute(stmt)
+        rows = rp.fetchall()
+    if len(rows) > 0:
+        rows = [x for (x,) in rows]
+
+    new_records = [record for record in records if record["channel_id"] not in rows]
+    duplicate_records = [record for record in records if record["channel_id"] in rows]
+
+    if len(new_records) > 0:
+        # save new_records
+        try:
+            stmt = sa.insert(channel_metadata_table).values(new_records)
+            with engine.connect() as conn:
+                conn.execute(stmt)
+                conn.commit()
+        except Exception as e:
+            print(e)
+    if len(duplicate_records) > 0:
+        pass  # do nothing with these
+
+
+def insert_data_into_seed_table(records: list[dict]):
+    # check if the table already contains channels matching the IDs of the incoming records
+    stmt = sa.select(seed_table.c.channel_id).where(
+        seed_table.c.channel_id.in_(
+            [record["channel_id"] for record in records]
+        )
+    )
+    with engine.connect() as conn:
+        rp = conn.execute(stmt)
+        rows = rp.fetchall()
+    if len(rows) > 0:
+        rows = [x for (x,) in rows]
+
+    new_records = [record for record in records if record["channel_id"] not in rows]
+    duplicate_records = [record for record in records if record["channel_id"] in rows]
+
+    if len(new_records) > 0:
+        # save new_records
+        try:
+            stmt = sa.insert(seed_table).values(new_records)
+            with engine.connect() as conn:
+                conn.execute(stmt)
+                conn.commit()
+        except Exception as e:
+            print(e)
+    if len(duplicate_records) > 0:
+        pass  # do nothing with these
+
 def instantiate_channel_messages_table(my_table_name: str) -> SQLAlchemyTable:
     my_table = sa.Table(
         my_table_name,
@@ -55,16 +113,6 @@ def instantiate_channel_messages_table(my_table_name: str) -> SQLAlchemyTable:
     )
     return my_table
 
-
-def insert_data_into_channel_metadata_table(records: list[dict]):
-    # TODO: identify channels already in table
-    # TODO: remove those from the incoming records
-    # TODO: write remainder to table
-
-    stmt = sa.insert(channel_metadata_table).values(records)
-    with engine.connect() as conn:
-        conn.execute(stmt)
-        conn.commit()
 
 def insert_data_into_channel_messages_table(records: list[dict]):
     """
@@ -115,34 +163,68 @@ def insert_data_into_channel_messages_table(records: list[dict]):
     return
 
 
-def insert_data_into_seed_table(records: list[dict]):
-    # TODO: identify channels already in table
-    # TODO: remove those from the incoming records
-    # TODO: write remainder to table
-
-    stmt = sa.insert(seed_table).values(records)
-    with engine.connect() as conn:
-        conn.execute(stmt)
-        conn.commit()
-
-
-def fetch_channel_ids(channel_names: list[str]) -> list[int]:
+def fetch_seed_list_names() -> list[str]:
     with engine.connect() as conn:
         rp = conn.execute(
-            sa.select(channel_metadata_table.c.channel_id).where(channel_metadata_table.c.channel_name.in_(channel_names))
+            sa.select(seed_table.c.seed_list).distinct(seed_table.c.seed_list)
+        )
+        rows = rp.fetchall()
+    return [row for (row,) in rows]
+
+
+def fetch_seed_list_preview(my_seed_list_names: list[str]) -> list[dict]:
+    with engine.connect() as conn:
+        rp = conn.execute(
+            sa.select(seed_table).where(seed_table.c.seed_list.in_(my_seed_list_names))
         )
     records = [dict(elt._mapping) for elt in rp.fetchall()]
-    return [record['channel_id'] for record in records]
+    return records
+
+
+def fetch_birth_chart_data(
+    seed_list_names: list[str], birth_chart_unit: str
+) -> list[dict]:
+    seed_channel_ids = list(
+        set([seed["channel_id"] for seed in fetch_seed_list_preview(seed_list_names)])
+    )
+
+    stmt = (
+        sa.select(
+            sa.sql.func.date_trunc(
+                birth_chart_unit, channel_metadata_table.c.channel_birthdate
+            ),
+            sa.sql.func.count(),
+        )
+        .filter(channel_metadata_table.c.channel_id.in_(seed_channel_ids))
+        .group_by(
+            sa.sql.func.date_trunc(
+                birth_chart_unit, channel_metadata_table.c.channel_birthdate
+            )
+        )
+        .order_by(
+            sa.sql.func.date_trunc(
+                birth_chart_unit, channel_metadata_table.c.channel_birthdate
+            )
+        )
+    )
+    with engine.connect() as conn:
+        rp = conn.execute(stmt)
+    records = [dict(elt._mapping) for elt in rp.fetchall()]
+    return [
+        {"creation_dt": record["date_trunc_1"], "count": record["count_1"]}
+        for record in records
+    ]
+
 
 def fetch_time_series_chart_data(
-    seed_channel_names: list[str],
+    seed_list_names: list[str],
     start_date: str,
     end_date: str,
     time_series_chart_unit: str,
 ) -> list[dict]:
-
-    # get seed_channel_ids from seed_channel_names:
-    seed_channel_ids = fetch_channel_ids(seed_channel_names)
+    seed_channel_ids = list(
+        set([seed["channel_id"] for seed in fetch_seed_list_preview(seed_list_names)])
+    )
 
     stmt = (
         sa.select(
@@ -179,6 +261,50 @@ def fetch_time_series_chart_data(
     ]
 
 
+def fetch_top_messages(
+    seed_list_names: list[str], start_date: str, end_date: str, the_limit: int
+) -> list[dict]:
+    seed_channel_ids = list(
+        set([seed["channel_id"] for seed in fetch_seed_list_preview(seed_list_names)])
+    )
+
+    with engine.connect() as conn:
+        rp = conn.execute(
+            sa.select(channel_message_table)
+            .filter(
+                channel_message_table.c.channel_id.in_(seed_channel_ids),
+                channel_message_table.c.message_views.is_not(None),
+                channel_message_table.c.message_datetime
+                >= datetime.strptime(start_date, "%Y-%m-%d"),
+                channel_message_table.c.message_datetime
+                <= datetime.strptime(end_date, "%Y-%m-%d"),
+            )
+            .order_by(channel_message_table.c.message_views.desc())
+            .limit(the_limit)
+        )
+    records = [dict(elt._mapping) for elt in rp.fetchall()]
+    return records
+
+
+def fetch_seed_metadata_full(seed_list_names: list[str]) -> list[dict]:
+    seed_channel_ids = list(
+        set([seed["channel_id"] for seed in fetch_seed_list_preview(seed_list_names)])
+    )
+
+    with engine.connect() as conn:
+        rp = conn.execute(
+            sa.select(channel_metadata_table)
+            .where(channel_metadata_table.c.channel_id.in_(seed_channel_ids))
+            .order_by(channel_metadata_table.c.num_subscribers.desc())
+        )
+    records = [dict(elt._mapping) for elt in rp.fetchall()]
+    return records
+
+
+channel_message_table_name = "channel_messages"
+channel_metadata_table_name = "channel_metadata"
+seed_table_name = "seeds"
+
 engine = sa.create_engine(
     f"postgresql://"
     f"{config['telegram-db']['user']}:"
@@ -187,15 +313,14 @@ engine = sa.create_engine(
     f"{config['telegram-db']['port']}/"
     f"{config['telegram-db']['dbname']}",
     echo=True,
+    pool_size=20,
+    max_overflow=0,
 )
 
-channel_message_table_name = "channel_messages"
-channel_metadata_table_name = "channel_metadata"
-seed_table_name = "seeds"
 
-# Define tables and create them if they don't already exist
+# Define Telegram tables and create them if they don't already exist:
 meta = sa.MetaData()
+channel_message_table = instantiate_channel_messages_table(channel_message_table_name)
 channel_metadata_table = instantiate_channel_metadata_table(channel_metadata_table_name)
 seed_table = instantiate_seed_table(seed_table_name)
-channel_message_table = instantiate_channel_messages_table(channel_message_table_name)
 meta.create_all(engine)

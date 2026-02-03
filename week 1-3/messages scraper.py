@@ -8,7 +8,7 @@ if sys.platform in ('win32', 'darwin'):
 
 from telethon.sync import TelegramClient
 from telethon.tl.patched import Message as TelegramMessage
-from config import app_name, api_id, api_hash
+from week5.week5.config import app_name, api_id, api_hash
 import time
 import os
 import csv
@@ -43,7 +43,7 @@ def extract_data_from_message_object(message: TelegramMessage) -> dict:
 
 if __name__ == "__main__":
     # This is where the program really begins
-    OUTPUT_DIR = "/Users/apple/PycharmProjects/dhs622zs"
+    OUTPUT_DIR = "/"
     my_output_file_full_path = os.path.join(OUTPUT_DIR, "russian_disinfo_channels_messages.csv")
 
     channel_name = "ndp_pl"

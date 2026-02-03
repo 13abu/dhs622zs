@@ -11,7 +11,6 @@ import os
 import pandas as pd
 import json
 import time
-import csv
 
 from telethon.sync import TelegramClient
 from telethon import functions
@@ -19,7 +18,7 @@ from telethon.tl.types import ChatFull
 
 # Import Config
 
-from config import app_name, api_id, api_hash
+from week5.week5.config import app_name, api_id, api_hash
 
 # import data parsing
 
@@ -41,7 +40,7 @@ if __name__ == '__main__':
     # Input data
     channel_names = ["rybar","mig41","rian_ru","Kadyrov_95", "RVvoenkor", "boris_rozhin", "ukr_leaks", "ndp_pl", "naukaua", "polska_grupa_informacyjna", "pravdaplcom"]
 
-output_dir = "/Users/apple/PycharmProjects/dhs622zs"
+output_dir = "/"
 
 # Retrieve channel metadata from Telegram API
 with TelegramClient(app_name, api_id, api_hash) as client:
