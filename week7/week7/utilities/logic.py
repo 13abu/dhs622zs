@@ -6,6 +6,14 @@ from telethon.tl.patched import Message as TelegramMessage
 from telethon.tl.types.messages import ChatFull
 
 import pandas as pd
+from pandas.core.frame import DataFrame
+import networkx as nx
+from networkx.classes.digraph import DiGraph
+import community
+from urllib.parse import urlparse
+
+
+import pandas as pd
 from .db import (
     fetch_seed_list_names,
     fetch_seed_list_preview,
@@ -14,8 +22,11 @@ from .db import (
     fetch_time_series_chart_data,
     fetch_top_messages,
     insert_data_into_seed_table,
-    insert_data_into_channel_metadata_table,
-    insert_data_into_channel_messages_table,
+    insert_data_into_channel_metadata_table_advanced,
+    insert_data_into_channel_messages_table_advanced,
+    fetch_weighted_edges_fwd_network,
+    fetch_domain_edges,
+    fetch_metadata_for_single_channel,
 )
 
 SECONDS_TO_PAUSE_BETWEEN_CHANNEL_INFO_LOOKUPS = 5
@@ -98,7 +109,7 @@ def retrieve_and_save_channel_metadata(
 
     # Insert data into database
     if len(records) > 0:
-        insert_data_into_channel_metadata_table(records)
+        insert_data_into_channel_metadata_table_advanced(records)
         insert_data_into_seed_table(seed_records)
 
 
@@ -224,7 +235,7 @@ def render_message_table(
 
 
 def store_channel_messages(records: list[dict]):
-    insert_data_into_channel_messages_table(records)
+    insert_data_into_channel_messages_table_advanced(records)
 
 
 def extract_data_from_message_object(message: TelegramMessage) -> dict:
@@ -307,3 +318,413 @@ def retrieve_and_save_channel_messages(
 
     # Save data locally
     store_channel_messages(records)
+
+
+def filter_network_by_weight(
+    weighted_edges_records: list[dict],
+    source_var: str,
+    target_var: str,
+    weight_var: str,
+    network_max_size: int = None,
+) -> DiGraph:
+    weighted_edges_df = pd.DataFrame.from_records(weighted_edges_records)
+    threshold = 0
+
+    def get_num_unique_nodes(weighted_edges_df: DataFrame) -> int:
+        sources = list(weighted_edges_df[source_var])
+        targets = list(weighted_edges_df[target_var])
+        return len(list(set(sources + targets)))
+
+    if network_max_size is not None:
+        while True:
+            weighted_edges_df = weighted_edges_df.loc[
+                weighted_edges_df[weight_var] > threshold, :
+            ]
+
+            if get_num_unique_nodes(weighted_edges_df) <= network_max_size:
+                break
+
+            print(
+                f"The graph is too large. Let's filter it down by incrementing the threshold to {threshold}"
+            )
+            threshold = min(weighted_edges_df[weight_var])
+
+    G = nx.DiGraph()
+    G.add_weighted_edges_from(
+        weighted_edges_df.loc[:, [source_var, target_var, weight_var]].values,
+        weight=weight_var,
+    )
+    print(f"The graph has {len(G.nodes())} nodes and {len(G.edges())} edges")
+
+    return G
+
+
+def extract_domain_from_url(my_url: str) -> str:
+    try:
+        domain = urlparse(my_url).netloc
+    except Exception as e:
+        if isinstance(e, ValueError):
+            domain = None
+        else:
+            raise e
+    return domain
+
+
+def make_cytoscape_stylesheet(
+    my_nodes: list[dict], my_edges: list[dict], hovered_node: dict = None
+) -> list[dict]:
+    of_interest_opacity = 1
+    not_of_interest_opacity = 0.2
+
+    min_node_strength = min([node["data"]["size"] for node in my_nodes])
+    max_node_strength = max([node["data"]["size"] for node in my_nodes])
+    min_edge_weight = min([edge["data"]["weight"] for edge in my_edges])
+    max_edge_weight = max([edge["data"]["weight"] for edge in my_edges])
+
+    my_stylesheet = [
+        {
+            "selector": "node",
+            "style": {
+                "content": "data(label)",
+                "color": "black",
+                "text-valign": "center",
+                "text-halign": "center",
+                "width": f"mapData(size, {min_node_strength}, {max_node_strength}, 1, 50)",
+                "height": f"mapData(size, {min_node_strength}, {max_node_strength}, 1, 50)",
+                "font-size": f"mapData(size, {min_node_strength}, {max_node_strength}, 1, 50)",
+            },
+        },
+        {
+            "selector": "edge",
+            "style": {
+                "width": f"mapData(weight, {min_edge_weight}, {max_edge_weight}, 0.1, 5)",
+                "curve-style": "bezier",
+            },
+        },
+    ]
+
+    if hovered_node is not None:
+        edges_of_interest = [
+            edge
+            for edge in my_edges
+            if edge["data"]["source"] == hovered_node["id"]
+            or edge["data"]["target"] == hovered_node["id"]
+        ]
+        node_ids_of_interest = list(
+            set(
+                [edge["data"]["source"] for edge in edges_of_interest]
+                + [edge["data"]["target"] for edge in edges_of_interest]
+            )
+        )
+    else:
+        edges_of_interest = my_edges
+        node_ids_of_interest = [my_node["data"]["id"] for my_node in my_nodes]
+
+    my_stylesheet += [
+        {
+            "selector": 'node[id = "{}"]'.format(node["data"]["id"]),
+            "style": {
+                "opacity": of_interest_opacity
+                if node["data"]["id"] in node_ids_of_interest
+                else not_of_interest_opacity,
+                "background-color": node["data"]["color"],
+            },
+        }
+        for node in my_nodes
+    ]
+
+    my_stylesheet += [
+        {
+            "selector": 'edge[id = "{}"]'.format(edge["data"]["id"]),
+            "style": {
+                "opacity": of_interest_opacity
+                if edge in edges_of_interest
+                else not_of_interest_opacity,
+                "line-color": edge["data"]["color"],
+            },
+        }
+        for edge in my_edges
+    ]
+
+    return my_stylesheet
+
+
+def map_communities_to_colors(G: DiGraph) -> dict:
+    unique_communities = list(set([G.nodes()[node]["cluster"] for node in G.nodes()]))
+    rows = []
+    for community in unique_communities:
+        num_nodes = len(
+            [node for node in G.nodes() if G.nodes()[node]["cluster"] == community]
+        )
+        rows.append((community, num_nodes))
+    df = pd.DataFrame(rows, columns=["cluster", "num_nodes"])
+    df.sort_values("num_nodes", ascending=False, inplace=True)
+    df.reset_index(inplace=True, drop=True)
+
+    colors = ["red", "blue", "green", "yellow", "purple", "pink", "orange"]
+
+    communities_to_colors = {}
+    for i in range(0, df.shape[0]):
+        if i < len(colors):
+            communities_to_colors[df.loc[i, "cluster"]] = colors[i]
+        else:
+            communities_to_colors[df.loc[i, "cluster"]] = "grey"
+
+    return communities_to_colors
+
+
+#########################################################################################
+
+
+def get_domain_network_edges(
+    start_date: str, end_date: str, seed_list_names: list[str]
+) -> list[dict]:
+    seed_channel_ids = list(
+        set([seed["channel_id"] for seed in fetch_seed_list_preview(seed_list_names)])
+    )
+    df = pd.DataFrame.from_records(
+        fetch_domain_edges(seed_channel_ids, start_date, end_date)
+    )
+
+    # Extract domains from URLs:
+    df["domain"] = df["url"].apply(lambda x: extract_domain_from_url(x))
+
+    # Drop URLs where domain was unextractable:
+    df = df.loc[df["domain"].notnull(), :]
+
+    # Drop select domains:
+    df = df.loc[~df["domain"].isin(("t.me",)), :]
+
+    # Collapse to unique domains:
+    domain_df = df.groupby(["channel_id", "domain"])["weight"].sum()
+    domain_df = domain_df.to_frame()
+    domain_df = domain_df.reset_index(drop=False)
+    domain_df = domain_df.sort_values(["channel_id", "weight"], ascending=[True, False])
+    domain_df = domain_df.reset_index(drop=True)
+
+    return domain_df.to_dict("records")
+
+
+def make_forward_network(
+    seed_list_names: list[str],
+    start_date: str,
+    end_date: str,
+    network_max_size: int = None,
+) -> DiGraph:
+    seed_df = pd.DataFrame.from_records(get_seed_list_preview(seed_list_names))
+    weighted_edges_records = fetch_weighted_edges_fwd_network(
+            list(seed_df["channel_id"]), start_date, end_date
+        )
+
+    G = filter_network_by_weight(
+        weighted_edges_records,
+        "channel_id",
+        "forwardee_channel_id",
+        "count_1",
+        network_max_size,
+    )
+
+    # Set node attributes:
+    nx.set_node_attributes(
+        G,
+        dict(zip(seed_df["channel_id"], seed_df["channel_name"])),
+        "channel_name",
+    )
+    nx.set_node_attributes(
+        G, dict(zip(seed_df["channel_id"], seed_df["seed_list"])), "seed_list_name"
+    )
+    nx.set_node_attributes(G, dict(G.in_degree()), "in_degree")
+    nx.set_node_attributes(G, dict(G.out_degree()), "out_degree")
+    nx.set_node_attributes(G, dict(G.in_degree(weight="count_1")), "in_strength")
+    nx.set_node_attributes(G, dict(G.out_degree(weight="count_1")), "out_strength")
+    nx.set_node_attributes(G, community.best_partition(G.to_undirected()), "cluster")
+
+    return G
+
+
+def make_cytoscape_elements(
+    G: DiGraph, weight_var: str = "count_1", label_var: str = "channel_name"
+) -> tuple[list[dict], list[dict]]:
+    community_to_colors_mapper = map_communities_to_colors(G)
+
+    # Create Cytoscape elements:
+    my_nodes = [
+        {
+            "data": {
+                "type": "node",
+                "id": str(node),
+                "label": str(G.nodes()[node][label_var])
+                if label_var in G.nodes()[node].keys()
+                else "",
+                "size": G.nodes()[node]["in_strength"],
+                "color": community_to_colors_mapper[G.nodes()[node]["cluster"]],
+            }
+        }
+        for node in G.nodes()
+    ]
+
+    # my_edges = [
+    #     {
+    #         "data": {
+    #             "type": "edge",
+    #             "id": f"{source}-{target}",
+    #             "source": source,
+    #             "target": target,
+    #             "weight": weight,
+    #             "color": community_to_colors_mapper[
+    #                 G.nodes()[source]["cluster"]
+    #             ],
+    #         }
+    #     }
+    #     for (source, target, weight) in G.edges.data(weight_var, default=0)
+    #     if weight > 0
+    # ]
+
+    my_edges = [
+        {
+            "data": {
+                "type": "edge",
+                "id": f"{source}-{target}",
+                "source": str(source),
+                "target": str(target),
+                "weight": G.edges()[(source, target)][weight_var],
+                "color": community_to_colors_mapper[G.nodes()[source]["cluster"]],
+            }
+        }
+        for (source, target) in G.edges()
+    ]
+
+    return my_nodes, my_edges
+
+
+def make_domain_network(
+    seed_list_names: list[str],
+    start_date: str,
+    end_date: str,
+    network_max_size: int = None,
+) -> DiGraph:
+    domain_records = get_domain_network_edges(start_date, end_date, seed_list_names)
+
+    B = filter_network_by_weight(
+        domain_records,
+        source_var="channel_id",
+        target_var="domain",
+        weight_var="weight",
+        network_max_size=network_max_size,
+    )
+
+    nx.set_node_attributes(B, {node: node for node in B.nodes()}, "label")
+    nx.set_node_attributes(B, dict(B.in_degree()), "in_degree")
+    nx.set_node_attributes(B, dict(B.out_degree()), "out_degree")
+    nx.set_node_attributes(B, dict(B.in_degree(weight="weight")), "in_strength")
+    nx.set_node_attributes(B, dict(B.out_degree(weight="weight")), "out_strength")
+    nx.set_node_attributes(B, community.best_partition(B.to_undirected()), "cluster")
+
+    return B
+
+
+def make_domain_table(
+    seed_list_names: list[str], start_date: str, end_date: str
+) -> list[dict]:
+    domain_df = pd.DataFrame.from_records(
+        get_domain_network_edges(start_date, end_date, seed_list_names)
+    )
+    domain_df = (
+        domain_df.groupby("domain")["weight"]
+        .sum()
+        .reset_index()
+        .sort_values("weight", ascending=False)
+    )
+    domain_df["domain"] = domain_df["domain"].apply(lambda x: f"[{x}]({x})")
+    return domain_df.to_dict("records")
+
+
+def make_cytoscape_elements_domain_network(B: DiGraph) -> tuple[list[dict], list[dict]]:
+    community_to_colors_mapper = map_communities_to_colors(B)
+
+    # Create Cytoscape elements:
+    my_nodes = [
+        {
+            "data": {
+                "type": "node",
+                "id": node,
+                "label": B.nodes()[node]["label"],
+                "size": B.nodes()[node]["in_strength"],
+                "color": community_to_colors_mapper[B.nodes()[node]["cluster"]],
+            }
+        }
+        for node in B.nodes()
+    ]
+
+    my_edges = [
+        {
+            "data": {
+                "type": "edge",
+                "id": f"{edge_tuple[0]}-{edge_tuple[1]}",
+                "source": edge_tuple[0],
+                "target": edge_tuple[1],
+                "weight": B.edges()[edge_tuple]["weight"],
+                "color": community_to_colors_mapper[
+                    B.nodes()[edge_tuple[0]]["cluster"]
+                ],
+            }
+        }
+        for edge_tuple in B.edges()
+    ]
+
+    my_elements = my_nodes + my_edges
+
+    min_node_strength = min([node["data"]["size"] for node in my_nodes])
+    max_node_strength = max([node["data"]["size"] for node in my_nodes])
+    min_edge_weight = min([edge["data"]["weight"] for edge in my_edges])
+    max_edge_weight = max([edge["data"]["weight"] for edge in my_edges])
+
+    my_stylesheet = [
+        {
+            "selector": "node",
+            "style": {
+                "content": "data(label)",
+                "color": "black",
+                "text-valign": "center",
+                "text-halign": "center",
+                "width": f"mapData(size, {min_node_strength}, {max_node_strength}, 1, 50)",
+                "height": f"mapData(size, {min_node_strength}, {max_node_strength}, 1, 50)",
+                "font-size": f"mapData(size, {min_node_strength}, {max_node_strength}, 1, 50)",
+            },
+        },
+        {
+            "selector": "edge",
+            "style": {
+                "width": f"mapData(weight, {min_edge_weight}, {max_edge_weight}, 0.1, 5)",
+                "curve-style": "bezier",
+            },
+        },
+    ]
+
+    my_stylesheet += [
+        {
+            "selector": 'node[id = "{}"]'.format(node["data"]["id"]),
+            "style": {
+                "opacity": 1,
+                "background-color": node["data"]["color"],
+            },
+        }
+        for node in my_nodes
+    ]
+
+    my_stylesheet += [
+        {
+            "selector": 'edge[id = "{}"]'.format(edge["data"]["id"]),
+            "style": {
+                "opacity": 1,
+                "line-color": edge["data"]["color"],
+            },
+        }
+        for edge in my_edges
+    ]
+
+    return my_elements, my_stylesheet
+
+
+def get_metadata_for_single_channel(channel_id: int) -> dict:
+    return fetch_metadata_for_single_channel(channel_id)

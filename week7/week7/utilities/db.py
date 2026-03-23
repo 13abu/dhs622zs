@@ -63,6 +63,29 @@ def insert_data_into_channel_metadata_table(records: list[dict]):
     if len(duplicate_records) > 0:
         pass  # do nothing with these
 
+def insert_data_into_channel_metadata_table_advanced(records: list[dict]) -> None:
+    stmt = sa.select(channel_metadata_table.c.channel_id).where(
+        channel_metadata_table.c.channel_id.in_(
+            [record["channel_id"] for record in records]
+        )
+    )
+    with engine.connect() as conn:
+        rp = conn.execute(stmt)
+        rows = rp.fetchall()
+    if len(rows) > 0:
+        rows = [x for (x,) in rows]
+
+    new_records = [record for record in records if record["channel_id"] not in rows]
+
+    if len(new_records) > 0:
+        try:
+            stmt = sa.insert(channel_metadata_table).values(new_records)
+            with engine.connect() as conn:
+                conn.execute(stmt)
+                conn.commit()
+        except Exception as e:
+            print(e)
+    return
 
 def insert_data_into_seed_table(records: list[dict]):
     # check if the table already contains channels matching the IDs of the incoming records
@@ -162,6 +185,36 @@ def insert_data_into_channel_messages_table(records: list[dict]):
 
     return
 
+def insert_data_into_channel_messages_table_advanced(records: list[dict]) -> None:
+    stmt = sa.select(
+        channel_message_table.c.channel_id, channel_message_table.c.message_id
+    ).filter(
+        channel_message_table.c.channel_id.in_(
+            [record["channel_id"] for record in records]
+        ),
+        channel_message_table.c.message_id.in_(
+            [record["message_id"] for record in records]
+        ),
+    )
+    with engine.connect() as conn:
+        rp = conn.execute(stmt)
+        rows = rp.fetchall()
+
+    if len(rows) > 0:
+        new_records = [
+            record
+            for record in records
+            if (int(record["channel_id"]), int(record["message_id"])) not in rows
+        ]
+    else:
+        new_records = records
+
+    if len(new_records) > 0:
+        stmt = sa.insert(channel_message_table).values(new_records)
+        with engine.connect() as conn:
+            conn.execute(stmt)
+            conn.commit()
+    return
 
 def fetch_seed_list_names() -> list[str]:
     with engine.connect() as conn:
@@ -290,6 +343,81 @@ def fetch_seed_metadata_full(seed_list_names: list[str]) -> list[dict]:
     seed_channel_ids = list(
         set([seed["channel_id"] for seed in fetch_seed_list_preview(seed_list_names)])
     )
+
+def fetch_weighted_edges_fwd_network(
+        seed_channel_ids: list[str], start_date: str, end_date: str
+) -> list[dict]:
+    with engine.connect() as conn:
+        rp = conn.execute(
+            sa.select(
+                channel_message_table.c.channel_id,
+                channel_message_table.c.forwardee_channel_id,
+                sa.sql.func.count(),
+            )
+            .filter(
+                channel_message_table.c.channel_id.in_(seed_channel_ids),
+                channel_message_table.c.message_is_forward == True,
+                channel_message_table.c.forwardee_channel_id.is_not(None),
+                channel_message_table.c.message_datetime
+                >= datetime.strptime(start_date, "%Y-%m-%d"),
+                channel_message_table.c.message_datetime
+                <= datetime.strptime(end_date, "%Y-%m-%d"),
+            )
+            .group_by(
+                channel_message_table.c.channel_id,
+                channel_message_table.c.forwardee_channel_id,
+            )
+            .order_by(
+                channel_message_table.c.channel_id,
+                channel_message_table.c.forwardee_channel_id,
+            )
+        )
+    records = [dict(elt._mapping) for elt in rp.fetchall()]
+    return records
+
+def fetch_metadata_for_single_channel(channel_id: int) -> dict:
+    with engine.connect() as conn:
+        rp = conn.execute(
+            sa.select(channel_metadata_table)
+            .where(channel_metadata_table.c.channel_id == channel_id)
+            .order_by(channel_metadata_table.c.num_subscribers.desc())
+        )
+    records = [dict(elt._mapping) for elt in rp.fetchall()]
+    assert len(records) == 1
+    return records[0]
+
+def fetch_domain_edges(
+        seed_channel_ids: list, start_date: str, end_date: str
+) -> list[dict]:
+    url_regex = "https?://\S+"
+
+    my_stmt = f"""
+    with my_view as
+    (select channel_id, message_text, message_views 
+    from {channel_message_table_name}
+    where channel_id in {tuple(seed_channel_ids)}
+    and message_datetime >= DATE('{str(start_date)}')
+    and message_datetime <= DATE('{str(end_date)}'))
+
+    select regexp_matches(message_text, '{url_regex}', 'g') as url, 
+    message_views as weight,
+    channel_id
+    from my_view
+    """
+
+    with engine.connect() as conn:
+        rp = conn.execute(sa.text(my_stmt))
+    records = [dict(elt._mapping) for elt in rp.fetchall()]
+    records = [
+        {
+            "url": record["url"][0],
+            "channel_id": record["channel_id"],
+            "weight": record["weight"],
+        }
+        for record in records
+    ]
+
+    return records
 
     with engine.connect() as conn:
         rp = conn.execute(

@@ -1,6 +1,8 @@
 from dash import dcc, html, Input, Output, State, dash_table, no_update
 import dash
 import plotly.express as px
+import dash_cytoscape as cyto
+
 
 import pandas as pd
 
@@ -14,6 +16,12 @@ from ...utilities.logic import (
     get_birth_chart_data,
     get_time_series_chart_data,
     render_message_table,
+    make_forward_network,
+    make_cytoscape_elements,
+    make_domain_network,
+    make_domain_table,
+    make_cytoscape_stylesheet,
+    get_metadata_for_single_channel,
     # translate_messages,
 )
 
@@ -109,6 +117,8 @@ def specify_analysis_container(analyze_button_clicks: int) -> html:
             html.Div(id="seed-channel-metadata-table"),
             html.Div(id="domain-table-container"),
             html.Div(id="birth-chart-container"),
+            html.Div(id="forward-network-container"),
+            html.Div(id="domain-network-container"),
             dcc.RadioItems(
                 id="birth-chart-unit",
                 options=[
@@ -320,3 +330,169 @@ def render_message_table_callback(
 #         else {"id": key, "name": key}
 #         for key in records[0].keys()
 #     ]
+def render_forward_network(
+    message_table_children, seed_list_names, start_date, end_date
+):
+    G = make_forward_network(seed_list_names, start_date, end_date, 800)
+    my_nodes, my_edges = make_cytoscape_elements(G, "count_1")
+    my_stylesheet = make_cytoscape_stylesheet(my_nodes, my_edges)
+
+    return html.Div(
+        [
+            html.P(
+                f"Forwarding network has {len(G.nodes())} nodes and {len(G.edges())} edges"
+            ),
+            cyto.Cytoscape(
+                id="forward-network",
+                layout={"name": "cose"},
+                style={"width": "90%", "height": "800px"},
+                elements=my_nodes + my_edges,
+                stylesheet=my_stylesheet,
+                responsive=True,
+            ),
+            html.Br(),
+            html.Div(id="tapNode-feedback"),
+        ]
+    )
+
+
+@dash.callback(
+    Output("domain-network-container", "children"),
+    Input("domain-network-container", "children"),
+    State("seed-list-menu", "value"),
+    State("my-date-picker-range", "start_date"),
+    State("my-date-picker-range", "end_date"),
+)
+def render_domain_network(
+    domain_network_container, seed_list_names, start_date, end_date
+):
+    B = make_domain_network(seed_list_names, start_date, end_date, 800)
+    my_nodes, my_edges = make_cytoscape_elements(B, "weight", "label")
+    my_stylesheet = make_cytoscape_stylesheet(my_nodes, my_edges)
+
+    return html.Div(
+        [
+            html.P(
+                f"Domain network has {len(B.nodes())} nodes and {len(B.edges())} edges"
+            ),
+            cyto.Cytoscape(
+                id="domain-network",
+                layout={"name": "cose"},
+                style={"width": "90%", "height": "800px"},
+                elements=my_nodes + my_edges,
+                stylesheet=my_stylesheet,
+                responsive=True,
+            ),
+            html.Br(),
+            html.Div(id="domain-tapNode-feedback"),
+        ]
+    )
+
+
+@dash.callback(
+    Output("domain-table-container", "children"),
+    Input("domain-table-container", "children"),
+    State("seed-list-menu", "value"),
+    State("my-date-picker-range", "start_date"),
+    State("my-date-picker-range", "end_date"),
+)
+def render_domain_table(domain_table_container, seed_list_names, start_date, end_date):
+    domain_records = make_domain_table(seed_list_names, start_date, end_date)
+
+    return html.Div(
+        [
+            dash_table.DataTable(
+                data=domain_records,
+                columns=[
+                    {"name": key, "id": key, "type": "text", "presentation": "markdown"}
+                    if key == "domain"
+                    else {"id": key, "name": key}
+                    for key in domain_records[0].keys()
+                ],
+                style_cell={"textAlign": "left"},
+                style_data={
+                    "whiteSpace": "normal",
+                    "height": "auto",
+                },
+                page_current=0,
+                page_size=10,
+                export_format="csv",
+                sort_action="native",
+            )
+        ]
+    )
+
+
+@dash.callback(
+    Output("forward-network", "stylesheet"),
+    Input("forward-network", "mouseoverNodeData"),
+    State("forward-network", "elements"),
+)
+def change_transparency_forward_network(hovered_node, my_elements):
+    if not hovered_node:
+        return no_update
+
+    return make_cytoscape_stylesheet(
+        [x for x in my_elements if x["data"]["type"] == "node"],
+        [x for x in my_elements if x["data"]["type"] == "edge"],
+        hovered_node,
+    )
+
+
+@dash.callback(
+    Output("domain-network", "stylesheet"),
+    Input("domain-network", "mouseoverNodeData"),
+    State("domain-network", "elements"),
+)
+def change_transparency_domain_network(hovered_node, my_elements):
+    if not hovered_node:
+        return no_update
+
+    return make_cytoscape_stylesheet(
+        [x for x in my_elements if x["data"]["type"] == "node"],
+        [x for x in my_elements if x["data"]["type"] == "edge"],
+        hovered_node,
+    )
+
+
+@dash.callback(
+    Output("tapNode-feedback", "children"),
+    Input("forward-network", "tapNodeData"),
+    State("seed-list-menu", "value"),
+    State("my-date-picker-range", "start_date"),
+    State("my-date-picker-range", "end_date"),
+)
+def print_information_after_click(node_data, seed_list_names, start_date, end_date):
+    if not node_data:
+        return no_update
+
+    metadata_df = pd.DataFrame.from_records(
+        get_metadata_for_single_channel(node_data["id"])
+    )
+
+    if metadata_df.empty:
+        return html.Div(
+            html.P(
+                f"The node you clicked on has ID {node_data['id']}. "
+                f"The database contains no further information on it."
+            )
+        )
+
+    return html.Div(
+        [
+            html.P(f"Here is some metadata on the channel you clicked on:"),
+            dash_table.DataTable(
+                data=metadata_df.to_dict("records"),
+                columns=[{"name": i, "id": i} for i in list(metadata_df)],
+                style_cell={"textAlign": "left"},
+                style_data={
+                    "whiteSpace": "normal",
+                    "height": "auto",
+                },
+                page_current=0,
+                page_size=10,
+                export_format="csv",
+                sort_action="native",
+            ),
+        ]
+    )
