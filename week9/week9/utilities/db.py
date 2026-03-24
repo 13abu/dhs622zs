@@ -2,6 +2,7 @@ import sqlalchemy as sa
 from sqlalchemy.sql.schema import Table as SQLAlchemyTable
 from datetime import datetime
 from ..config import config
+from datetime import datetime
 
 
 def instantiate_channel_metadata_table(my_table_name: str) -> SQLAlchemyTable:
@@ -343,6 +344,40 @@ def fetch_seed_metadata_full(seed_list_names: list[str]) -> list[dict]:
     seed_channel_ids = list(
         set([seed["channel_id"] for seed in fetch_seed_list_preview(seed_list_names)])
     )
+
+def look_up_channel_id_with_channel_name(channel_name: str) -> int | None:
+    with engine.connect() as conn:
+        rp = conn.execute(
+            sa.select(seed_table.c.channel_id).where(seed_table.c.channel_name == channel_name)
+        )
+        channel_id = rp.fetchone()
+    if channel_id is None:
+        return None
+    return channel_id[0]
+
+
+def fetch_target_start_date(channel_name: str):
+    """
+    If we've never tracked this channel before, go all the way back to 2010.
+    If we have, just go back to the most recent message we already have.
+    """
+    channel_id = look_up_channel_id_with_channel_name(channel_name)
+    if channel_id is None:
+        return datetime.strptime("2010-01-01", "%Y-%m-%d").date()
+
+    with engine.connect() as conn:
+        rp = conn.execute(
+            sa.select(channel_message_table.c.message_datetime).where(
+                channel_message_table.c.channel_id == channel_id
+            )
+        )
+        message_datetimes = rp.fetchall()
+
+    if len(message_datetimes) == 0:
+        return datetime.strptime("2010-01-01", "%Y-%m-%d").date()
+
+    most_recent_message_datetime = max(message_datetimes)[0]
+    return most_recent_message_datetime.date()
 
 def fetch_weighted_edges_fwd_network(
         seed_channel_ids: list[str], start_date: str, end_date: str

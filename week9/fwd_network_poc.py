@@ -1,14 +1,14 @@
 import os
-from week7.config import HOME_DIR
-from week7.utilities.logic import make_forward_network
+from week9.config import HOME_DIR
+from week9.utilities.logic import make_forward_network
 import networkx as nx
 
 
 def run():
-    OUTPUT_DIR = os.path.join(HOME_DIR, "PycharmProjects", "smo", "week7", "data")
-    SEED_LIST_NAME = "russian_disinfo"
+    OUTPUT_DIR = os.path.join(HOME_DIR, "PycharmProjects", "smo", "week9", "data")
+    SEED_LIST_NAME = "indian_military_nationalism"
     START_DATE = "2022-01-01"
-    END_DATE = "2023-01-01"
+    END_DATE = "2026-01-01"
 
     G = make_forward_network([SEED_LIST_NAME], START_DATE, END_DATE)
 

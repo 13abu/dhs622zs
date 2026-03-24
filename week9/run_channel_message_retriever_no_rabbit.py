@@ -8,8 +8,8 @@ if sys.platform in ('win32', 'darwin'):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-from week7.utilities.logic import retrieve_and_save_channel_messages
-from week7.config import app_name, api_id, api_hash, INPUT_DIR
+from week9.utilities.logic import retrieve_and_save_channel_messages
+from week9.config import app_name, api_id, api_hash, INPUT_DIR
 import os
 import pandas as pd
 

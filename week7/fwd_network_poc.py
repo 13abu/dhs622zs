@@ -6,9 +6,9 @@ import networkx as nx
 
 def run():
     OUTPUT_DIR = os.path.join(HOME_DIR, "PycharmProjects", "smo", "week7", "data")
-    SEED_LIST_NAME = "russian_disinfo"
+    SEED_LIST_NAME = "indian_military_nationalism"
     START_DATE = "2022-01-01"
-    END_DATE = "2023-01-01"
+    END_DATE = "2026-01-01"
 
     G = make_forward_network([SEED_LIST_NAME], START_DATE, END_DATE)
 
