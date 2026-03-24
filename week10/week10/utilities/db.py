@@ -4,6 +4,16 @@ from datetime import datetime
 from ..config import config
 from datetime import datetime
 
+def instantiate_credentials_table(my_table_name: str) -> SQLAlchemyTable:
+    my_table = sa.Table(
+        my_table_name,
+        meta,
+        sa.Column("email", sa.types.BIGINT, primary_key=True),
+        sa.Column("password", sa.types.TEXT, nullable=False),
+    )
+    return my_table
+
+
 
 def instantiate_channel_metadata_table(my_table_name: str) -> SQLAlchemyTable:
     my_table = sa.Table(
@@ -467,6 +477,7 @@ def fetch_domain_edges(
 channel_message_table_name = "channel_messages"
 channel_metadata_table_name = "channel_metadata"
 seed_table_name = "seeds"
+credentials_table_name = "credentials"
 
 engine = sa.create_engine(
     f"postgresql://"
@@ -486,4 +497,5 @@ meta = sa.MetaData()
 channel_message_table = instantiate_channel_messages_table(channel_message_table_name)
 channel_metadata_table = instantiate_channel_metadata_table(channel_metadata_table_name)
 seed_table = instantiate_seed_table(seed_table_name)
+channel_credentials_table = instantiate_credentials_table(channel_metadata_table_name)
 meta.create_all(engine)

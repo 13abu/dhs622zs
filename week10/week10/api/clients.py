@@ -12,6 +12,7 @@ from ..config import api_base
 # TODO: implement the post_make_domain_network_api() client function,
 #  imitating the syntax for post_make_forward_network_api()
 
+
 def format_date(date_str: str) -> datetime:
     return datetime.strptime(date_str, "%Y-%m-%d %H:%M:%SZ")
 
